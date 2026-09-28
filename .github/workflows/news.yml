@@ -35,6 +35,23 @@ jobs:
           git add sent_links.json
           git diff --cached --quiet || git commit -m "update sent links"
           git push
+      - name: Token expiry reminder
+        if: always()
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          TOKEN_EXPIRES: "2026-12-27"   # cron-job.org용 GitHub 토큰 만료일 (재발급하면 이 날짜만 바꾸기)
+        run: |
+          if [ -z "$ADMIN_CHAT_ID" ]; then exit 0; fi
+          days=$(( ( $(TZ=Asia/Seoul date -d "$TOKEN_EXPIRES" +%s) - $(date +%s) ) / 86400 ))
+          hm=$(TZ=Asia/Seoul date +%H%M)
+          # 만료 7일 전부터 매일 오전 9시 실행 때 한 번만 알림
+          if [ "$days" -ge 0 ] && [ "$days" -le 7 ] && [ "$hm" -ge 900 ] && [ "$hm" -lt 930 ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${ADMIN_CHAT_ID}" \
+              --data-urlencode "text=🔔 cron-job.org용 GitHub 토큰이 ${TOKEN_EXPIRES}에 만료돼요 (약 ${days}일 남음)
+          GitHub에서 토큰 Regenerate → cron-job.org Authorization 값 교체 → news.yml의 TOKEN_EXPIRES 날짜 수정"
+          fi
       - name: Alert on failure
         if: failure()
         env:
