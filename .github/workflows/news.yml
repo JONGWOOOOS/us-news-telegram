@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: news-monitor
@@ -22,6 +23,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Check cron-job.org is alive
+        # GitHub 자체 예약 실행 때만: cron-job.org 실행이 2시간 넘게 없으면 텔레그램 알림
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+        run: |
+          if [ -z "$ADMIN_CHAT_ID" ]; then exit 0; fi
+          last=$(gh api "repos/${REPO}/actions/workflows/news.yml/runs?event=workflow_dispatch&per_page=1" --jq '.workflow_runs[0].created_at // empty')
+          if [ -z "$last" ]; then age=999999; else age=$(( $(date +%s) - $(date -d "$last" +%s) )); fi
+          echo "마지막 cron-job.org 실행: ${last:-없음} (${age}초 전)"
+          if [ "$age" -gt 7200 ]; then
+            curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+              --data-urlencode "chat_id=${ADMIN_CHAT_ID}" \
+              --data-urlencode "text=⏰ cron-job.org 실행이 $((age / 3600))시간 넘게 없어요
+          cron-job.org에서 작업이 Inactive인지, HISTORY에 401 오류가 있는지 확인해 주세요."
+          fi
       - name: Fetch news & send
         env:
           NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
