@@ -6,6 +6,7 @@ import re
 import sys
 import time
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -78,6 +79,21 @@ def clean(text):
     return html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
 
 
+def with_retry(fn, tries=3):
+    """네이버·텔레그램 서버의 일시적 오류(타임아웃, 5xx, 429)는 잠깐 쉬었다 다시 시도"""
+    for i in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            if i == tries - 1:
+                raise
+            wait = 5 * (i + 1)
+            if isinstance(e, urllib.error.HTTPError) and e.code == 429:
+                wait = int(e.headers.get("Retry-After") or 30)
+            print(f"[재시도] {e} → {wait}초 후 다시 시도", file=sys.stderr)
+            time.sleep(wait)
+
+
 def search_news(query):
     url = "https://openapi.naver.com/v1/search/news.json?" + urllib.parse.urlencode(
         {"query": query, "display": 50, "sort": "date"}
@@ -86,8 +102,10 @@ def search_news(query):
         "X-Naver-Client-Id": NAVER_ID,
         "X-Naver-Client-Secret": NAVER_SECRET,
     })
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.load(r).get("items", [])
+    def call():
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.load(r).get("items", [])
+    return with_retry(call)
 
 
 def send_telegram(text):
@@ -98,8 +116,10 @@ def send_telegram(text):
         "disable_web_page_preview": "true",
     }).encode()
     req = urllib.request.Request(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", data=data)
-    with urllib.request.urlopen(req, timeout=20) as r:
-        r.read()
+    def call():
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+    with_retry(call)
     time.sleep(1)  # 텔레그램 전송 속도 제한 대비
 
 
